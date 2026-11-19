@@ -1381,7 +1381,7 @@ router.get('/admin', needAdmin, async (req, res) => {
 router.get('/admin/users/:id', needAdmin, async (req, res) => {
   if (!isObjectId(req.params.id)) return res.status(404).json({ error: 'User not found' });
   const user = await User.findById(req.params.id)
-    .select('username email role isBanned createdAt library wishlist toyWishlist')
+    .select('username displayName email phone bio role isBanned createdAt library wishlist toyWishlist')
     .populate('library.game', 'title slug coverImage price')
     .populate('wishlist', 'title slug coverImage')
     .populate('toyWishlist', 'title slug coverImage')
@@ -1414,6 +1414,32 @@ router.post('/admin/users/:id/role', needAdmin, async (req, res) => {
   await u.save();
   if (String(u._id) === String(req.session.user._id)) req.session.user.role = role;
   res.json({ ok: true, role: u.role });
+});
+
+/* Edit the account fields an owner can safely change. Role, ban and password
+ * have their own endpoints because they carry guards. */
+router.post('/admin/users/:id', needAdmin, async (req, res) => {
+  if (!isObjectId(req.params.id)) return res.status(404).json({ error: 'User not found' });
+  const u = await User.findById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found' });
+  const patch = {};
+  if (req.body.username !== undefined) patch.username = String(req.body.username).trim().slice(0, 24);
+  if (req.body.email !== undefined) patch.email = String(req.body.email).toLowerCase().trim();
+  if (req.body.displayName !== undefined) patch.displayName = String(req.body.displayName).slice(0, 40);
+  if (req.body.phone !== undefined) patch.phone = String(req.body.phone).slice(0, 20);
+  if (req.body.bio !== undefined) patch.bio = String(req.body.bio).slice(0, 500);
+  if (!patch.username && req.body.username !== undefined) return res.status(400).json({ error: 'Username cannot be empty.' });
+  if (!patch.email && req.body.email !== undefined) return res.status(400).json({ error: 'Email cannot be empty.' });
+  if (patch.username && patch.username !== u.username) {
+    const dup = await User.findOne({ username: patch.username, _id: { $ne: u._id } }).select('_id').lean();
+    if (dup) return res.status(409).json({ error: 'That username is already taken.' });
+  }
+  if (patch.email && patch.email !== u.email) {
+    const dup = await User.findOne({ email: patch.email, _id: { $ne: u._id } }).select('_id').lean();
+    if (dup) return res.status(409).json({ error: 'That email is already used.' });
+  }
+  await User.updateOne({ _id: u._id }, { $set: patch });
+  res.json({ ok: true });
 });
 
 router.post('/admin/games/:id/status', needAdmin, async (req, res) => {
